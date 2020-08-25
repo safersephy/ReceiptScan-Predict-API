@@ -1,26 +1,24 @@
-import numpy as np
 import torch, torchvision
-print(torch.__version__, torch.cuda.is_available())
-
-from detectron2.utils.logger import setup_logger
-setup_logger()
+import layoutparser as lp
+import json
+import werkzeug
+import base64
 import cv2
+
 from detectron2 import model_zoo
 from detectron2.engine import DefaultPredictor
-import layoutparser as lp
 from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog
-
-import json
-from PIL import Image
 from flask import Flask
 from flask_restful import Resource, Api,reqparse
 
-from flask import jsonify
-import werkzeug
-import base64
+from detectron2.utils.logger import setup_logger
+setup_logger()
 
+print(torch.__version__, torch.cuda.is_available())
+
+#init flask server
 app = Flask(__name__)
 api = Api(app)
 
@@ -29,6 +27,16 @@ from detectron2.data.datasets import register_coco_instances
 
 register_coco_instances("receipts", {}, "../receipttrain/content/datasets/receipts-1.json",
                         "../receipttrain/content/datasets/receipts")
+# set config
+cfg = get_cfg()
+cfg.merge_from_file(model_zoo.get_config_file("COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml"))
+cfg.DATASETS.TRAIN = ("receipts",)
+# cfg.DATASETS.TEST = ("receipts", )
+cfg.MODEL.ROI_HEADS.NUM_CLASSES = 4
+
+cfg.MODEL.WEIGHTS = "../receipttrain/output/model_final.pth"
+cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.80  # set the testing threshold for this model
+predictor = DefaultPredictor(cfg)
 
 
 class ProcessImageEndpoint(Resource):
@@ -44,38 +52,20 @@ class ProcessImageEndpoint(Resource):
         if image_file:
             # Get the byte content using `.read()`
             image = image_file.read()
-            # Now do something with the image...
 
+
+            # temporarily store image as file
+            # TODO implement more sofisticated way to convert image bytestream to nparray
             f = open('image.jpg', 'wb+')
             f.write(image)
             f.close()
 
-
-
-            # set config
-            cfg = get_cfg()
-            cfg.merge_from_file(model_zoo.get_config_file("COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml"))
-            cfg.DATASETS.TRAIN = ("receipts",)
-            # cfg.DATASETS.TEST = ("receipts", )
-            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 4
-
-            cfg.MODEL.WEIGHTS = "../receipttrain/output/model_final.pth"
-            cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.80  # set the testing threshold for this model
-            predictor = DefaultPredictor(cfg)
-
-            # predict based on example image
-            from detectron2.utils.visualizer import ColorMode
-
             im = cv2.imread("image.jpg")
-
-
 
             outputs = predictor(im)
             instance_pred = outputs['instances'].to("cpu")
             v = Visualizer(im[:, :, ::-1], MetadataCatalog.get(cfg.DATASETS.TRAIN[0]), scale=1.0)
             v = v.draw_instance_predictions(instance_pred)
-           # cv2.imshow('', v.get_image()[:, :, ::-1])
-           # cv2.waitKey()
 
             # collect outputs and label names
             instance_pred = outputs['instances'].to("cpu")
@@ -122,15 +112,8 @@ class ProcessImageEndpoint(Resource):
             # according to the order
             text_blocks = lp.Layout([b.set(id=idx) for idx, b in enumerate(left_blocks + right_blocks)])
 
-            #lp.draw_box(im, text_blocks,
-            #            box_width=3,
-            #            show_element_id=True).show()
-
             # go for OCR
             ocr_agent = lp.TesseractAgent(languages='eng+nld')
-            # Initialize the tesseract ocr engine. You might need
-            # to install the OCR components in layoutparser:
-            # pip install layoutparser[ocr]
 
             receipt_dict = ""
             for block in text_blocks:
@@ -144,25 +127,19 @@ class ProcessImageEndpoint(Resource):
 
             receipt_dict = json.dumps(receipt_dict, ensure_ascii=True)
 
+            #convert annotated nparray to base64 to utf-8
             success, encoded_image = cv2.imencode('.png', v.get_image()[:, :, ::-1])
             content2 = encoded_image.tobytes()
-
             my_bytes = base64.b64encode(content2)
             my_string = my_bytes.decode("utf-8")
 
-
+            #TODO create more sofisticated response object, actual JSON ocr results and partialfile
             return "{\"ocr\": "+ receipt_dict +", \"image\":\"" + str(my_string) + "\"}"
         else:
+            #TODO create decent exception handling
             return "No image sent :("
 
-class Receipt(Resource):
-    def get(self):
-        result = {"type":"receipt","id":1}
-        return jsonify(result)
 
-
-
-api.add_resource(Receipt, '/receipt')
 api.add_resource(ProcessImageEndpoint, '/upload')
 
 
