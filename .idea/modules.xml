@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/restPOC.iml" filepath="$PROJECT_DIR$/.idea/restPOC.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/receipt prediction API.iml" filepath="$PROJECT_DIR$/.idea/receipt prediction API.iml" />
     </modules>
   </component>
 </project>
